@@ -1,0 +1,1361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Growthify CRM</title>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+<script src="https://unpkg.com/recharts@2/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+
+<style>
+  html, body { margin: 0; padding: 0; background: #f8fafc; }
+  * { box-sizing: border-box; }
+  ::-webkit-scrollbar { height: 8px; width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+  // ---- localStorage-backed storage shim (mimics window.storage API used by the app) ----
+  window.storage = {
+    async get(key, shared) {
+      try {
+        const raw = localStorage.getItem("growthify_" + key);
+        if (raw === null) return null;
+        return { key, value: raw, shared: !!shared };
+      } catch (e) {
+        return null;
+      }
+    },
+    async set(key, value, shared) {
+      try {
+        localStorage.setItem("growthify_" + key, value);
+        return { key, value, shared: !!shared };
+      } catch (e) {
+        return null;
+      }
+    },
+    async delete(key, shared) {
+      try {
+        localStorage.removeItem("growthify_" + key);
+        return { key, deleted: true, shared: !!shared };
+      } catch (e) {
+        return null;
+      }
+    },
+    async list(prefix, shared) {
+      try {
+        const keys = Object.keys(localStorage)
+          .filter(k => k.startsWith("growthify_" + (prefix || "")))
+          .map(k => k.replace("growthify_", ""));
+        return { keys, prefix, shared: !!shared };
+      } catch (e) {
+        return null;
+      }
+    }
+  };
+</script>
+
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect, useRef, useMemo } = React;
+
+// ---- Self-contained inline SVG icons (no external CDN dependency) ----
+function makeIcon(paths) {
+  return function Icon({ size = 20, color = "currentColor", strokeWidth = 2, className = "", ...rest }) {
+    return React.createElement(
+      "svg",
+      {
+        width: size, height: size, viewBox: "0 0 24 24", fill: "none",
+        stroke: color, strokeWidth: strokeWidth, strokeLinecap: "round",
+        strokeLinejoin: "round", className, ...rest
+      },
+      paths.map((p, i) => React.createElement(p.tag, { key: i, ...p.attrs }))
+    );
+  };
+}
+
+const Plus = makeIcon([{ tag: "path", attrs: { d: "M12 5v14M5 12h14" } }]);
+const Search = makeIcon([{ tag: "circle", attrs: { cx: 11, cy: 11, r: 8 } }, { tag: "path", attrs: { d: "m21 21-4.3-4.3" } }]);
+const Download = makeIcon([{ tag: "path", attrs: { d: "M12 3v12" } }, { tag: "path", attrs: { d: "m7 10 5 5 5-5" } }, { tag: "path", attrs: { d: "M5 21h14" } }]);
+const Upload = makeIcon([{ tag: "path", attrs: { d: "M12 21V9" } }, { tag: "path", attrs: { d: "m7 14 5-5 5 5" } }, { tag: "path", attrs: { d: "M5 3h14" } }]);
+const X = makeIcon([{ tag: "path", attrs: { d: "M18 6 6 18" } }, { tag: "path", attrs: { d: "m6 6 12 12" } }]);
+const Edit2 = makeIcon([{ tag: "path", attrs: { d: "m17 3 4 4-11 11H6v-4z" } }]);
+const Trash2 = makeIcon([{ tag: "path", attrs: { d: "M3 6h18" } }, { tag: "path", attrs: { d: "M8 6V4h8v2" } }, { tag: "path", attrs: { d: "M19 6l-1 14H6L5 6" } }, { tag: "path", attrs: { d: "M10 11v6" } }, { tag: "path", attrs: { d: "M14 11v6" } }]);
+const Calendar = makeIcon([{ tag: "rect", attrs: { x: 3, y: 4, width: 18, height: 18, rx: 2 } }, { tag: "path", attrs: { d: "M16 2v4" } }, { tag: "path", attrs: { d: "M8 2v4" } }, { tag: "path", attrs: { d: "M3 10h18" } }]);
+const User = makeIcon([{ tag: "circle", attrs: { cx: 12, cy: 8, r: 4 } }, { tag: "path", attrs: { d: "M4 21c0-4 4-6 8-6s8 2 8 6" } }]);
+const TrendingUp = makeIcon([{ tag: "path", attrs: { d: "M3 17l6-6 4 4 8-8" } }, { tag: "path", attrs: { d: "M15 7h6v6" } }]);
+const Users = makeIcon([{ tag: "circle", attrs: { cx: 9, cy: 8, r: 3 } }, { tag: "path", attrs: { d: "M2 21c0-3.5 3-5.5 7-5.5s7 2 7 5.5" } }, { tag: "path", attrs: { d: "M16 8a3 3 0 1 1 0 6" } }, { tag: "path", attrs: { d: "M17.5 15c3 .3 4.5 2.2 4.5 6" } }]);
+const DollarSign = makeIcon([{ tag: "path", attrs: { d: "M12 2v20" } }, { tag: "path", attrs: { d: "M17 6.5c0-1.9-2.2-3.5-5-3.5s-5 1.4-5 3.5S9.2 10 12 10s5 1.6 5 3.5-2.2 3.5-5 3.5-5-1.6-5-3.5" } }]);
+const Bell = makeIcon([{ tag: "path", attrs: { d: "M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7" } }, { tag: "path", attrs: { d: "M10 21a2 2 0 0 0 4 0" } }]);
+const LayoutGrid = makeIcon([{ tag: "rect", attrs: { x: 3, y: 3, width: 7, height: 7, rx: 1 } }, { tag: "rect", attrs: { x: 14, y: 3, width: 7, height: 7, rx: 1 } }, { tag: "rect", attrs: { x: 3, y: 14, width: 7, height: 7, rx: 1 } }, { tag: "rect", attrs: { x: 14, y: 14, width: 7, height: 7, rx: 1 } }]);
+const List = makeIcon([{ tag: "path", attrs: { d: "M8 6h13" } }, { tag: "path", attrs: { d: "M8 12h13" } }, { tag: "path", attrs: { d: "M8 18h13" } }, { tag: "path", attrs: { d: "M3 6h.01" } }, { tag: "path", attrs: { d: "M3 12h.01" } }, { tag: "path", attrs: { d: "M3 18h.01" } }]);
+const BarChart3 = makeIcon([{ tag: "path", attrs: { d: "M3 3v18h18" } }, { tag: "path", attrs: { d: "M7 16v-4" } }, { tag: "path", attrs: { d: "M12 16V8" } }, { tag: "path", attrs: { d: "M17 16v-6" } }]);
+const AlertCircle = makeIcon([{ tag: "circle", attrs: { cx: 12, cy: 12, r: 10 } }, { tag: "path", attrs: { d: "M12 8v5" } }, { tag: "path", attrs: { d: "M12 16h.01" } }]);
+const CheckCircle2 = makeIcon([{ tag: "circle", attrs: { cx: 12, cy: 12, r: 10 } }, { tag: "path", attrs: { d: "m9 12 2 2 4-4" } }]);
+const LayoutDashboard = makeIcon([{ tag: "rect", attrs: { x: 3, y: 3, width: 8, height: 9, rx: 1 } }, { tag: "rect", attrs: { x: 13, y: 3, width: 8, height: 5, rx: 1 } }, { tag: "rect", attrs: { x: 13, y: 12, width: 8, height: 9, rx: 1 } }, { tag: "rect", attrs: { x: 3, y: 16, width: 8, height: 5, rx: 1 } }]);
+const FileText = makeIcon([{ tag: "path", attrs: { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" } }, { tag: "path", attrs: { d: "M14 2v6h6" } }, { tag: "path", attrs: { d: "M9 13h6" } }, { tag: "path", attrs: { d: "M9 17h6" } }]);
+const CheckSquare = makeIcon([{ tag: "path", attrs: { d: "m9 11 3 3L22 4" } }, { tag: "path", attrs: { d: "M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" } }]);
+const ChevronLeft = makeIcon([{ tag: "path", attrs: { d: "m15 18-6-6 6-6" } }]);
+const ChevronRight = makeIcon([{ tag: "path", attrs: { d: "m9 18 6-6-6-6" } }]);
+const Square = makeIcon([{ tag: "rect", attrs: { x: 3, y: 3, width: 18, height: 18, rx: 2 } }]);
+const GitBranch = makeIcon([{ tag: "line", attrs: { x1: 6, y1: 3, x2: 6, y2: 15 } }, { tag: "circle", attrs: { cx: 18, cy: 6, r: 3 } }, { tag: "circle", attrs: { cx: 6, cy: 18, r: 3 } }, { tag: "path", attrs: { d: "M18 9a9 9 0 0 1-9 9" } }]);
+const {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend, LineChart, Line
+} = Recharts;
+
+const STATUSES = [
+  { key: "followup1", label: "Followup 1", color: "#3B82F6" },
+  { key: "followup2", label: "Followup 2", color: "#6366F1" },
+  { key: "followup3", label: "Followup 3", color: "#8B5CF6" },
+  { key: "lastfollowup", label: "Last Followup", color: "#EC4899" },
+  { key: "notresponding", label: "Not Responding", color: "#94A3B8" },
+  { key: "clientday", label: "Client Day", color: "#F59E0B" },
+  { key: "ghost", label: "Interested but Ghost", color: "#F97316" },
+  { key: "won", label: "Won Client", color: "#10B981" },
+];
+const STATUS_MAP = Object.fromEntries(STATUSES.map(s => [s.key, s]));
+
+const SOURCES = ["Facebook", "Discord", "LinkedIn", "Referral"];
+const FINDERS = ["Lutfan", "Jibran", "Salman"];
+
+const SOURCE_COLORS = { Facebook: "#3B82F6", Discord: "#6366F1", LinkedIn: "#0EA5E9", Referral: "#10B981" };
+const FINDER_COLORS = { Lutfan: "#F59E0B", Jibran: "#EC4899", Salman: "#8B5CF6" };
+
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
+const emptyLead = () => ({
+  id: uid(),
+  name: "",
+  company: "",
+  phone: "",
+  email: "",
+  source: SOURCES[0],
+  finder: FINDERS[0],
+  status: STATUSES[0].key,
+  dealValue: "",
+  notes: "",
+  nextFollowup: "",
+  createdAt: todayStr(),
+  updatedAt: todayStr(),
+});
+
+const emptyTask = () => ({
+  id: uid(),
+  title: "",
+  leadId: "",
+  dueDate: "",
+  done: false,
+  createdAt: todayStr(),
+});
+
+const SEED_LEADS = [
+  {
+    "name": "Daniel Smith",
+    "company": "",
+    "phone": "+923042808475",
+    "email": "daniel@righteousimagemedia.com",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup3",
+    "dealValue": "0",
+    "notes": "Looking for a Webflow Designer (Students & Emerging Designers Welcome)\nI'm looking to connect with a talented Webflow designer who's looking to gain real-world experience and build impressive work.\n\nAt Righteous Image Media, we create branding, marketing, and digital experiences for businesses throughout the Kansas City area, and I'm looking to add someone to my network who has a passion for clean design, user experience, and bringing websites to life.\n\nIf you're someone who:\nHas experience with Webflow (or is actively learning)\nHas a strong eye for design\nEnjoys collaborating with others\nWants to work on meaningful projects\nI'd love to connect.\n\nIf this sounds like you—or you know someone who would be a great fit—send me a message or tag them below.",
+    "nextFollowup": "2026-07-07",
+    "createdAt": "2026-07-02",
+    "updatedAt": "2026-07-02"
+  },
+  {
+    "name": "Noname",
+    "company": "",
+    "phone": "+923042808475",
+    "email": "gard@sumendit.com",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup3",
+    "dealValue": "0",
+    "notes": "🚀 We’re Hiring – B2B Performance Marketer  We’re looking for an experienced B2B Performance Marketer to join our team.  You should have proven experience running and scaling campaigns on:  * Meta Ads * Google Ads * B2B lead generation * Performance marketing with measurable results  If you know how to generate high-quality leads, optimize campaigns, and scale client acquisition, we’d love to hear from you.  Interested?  Send your CV, portfolio, or a short introduction",
+    "nextFollowup": "2026-07-07",
+    "createdAt": "2026-07-02",
+    "updatedAt": "2026-07-02"
+  },
+  {
+    "name": "Muhammad Arrafi Dandikusuma",
+    "company": "",
+    "phone": "+923042808475",
+    "email": "voltre.digital@gmail.com",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup2",
+    "dealValue": "0",
+    "notes": "🚀 We're Hiring: Digital Ads Freelancer (Project-Based) We're looking for a Digital Ads Freelancer to collaborate with our agency on client projects.  What we're looking for: - Experience running Meta Ads, Google Ads, or TikTok Ads (experience in at least one platform is welcome) - Able to plan, launch, optimize, and report on ad campaigns - Familiar with campaign objectives, audience targeting, pixel/tracking, and performance analysis - Able to work independently and meet deadlines  Bonus if you have: - Experience handling multiple client accounts - Certifications (Meta, Google, TikTok) - Experience with e-commerce or lead generation campaigns  To apply, please send the following to our email: 📩 [voltre.digital@gmail.com](mailto:voltre.digital@gmail.com)  Please attach: - Your CV/Resume - Portfolio or case studies (campaign results are highly appreciated) - The advertising platforms you're experienced with (Meta, Google, TikTok) - Years of experience - Your expected rate (hourly, daily, or per project) - Your availability to start  If you know someone who'd be a great fit, feel free to tag or share this post!",
+    "nextFollowup": "2026-07-07",
+    "createdAt": "2026-07-02",
+    "updatedAt": "2026-07-02"
+  },
+  {
+    "name": "non",
+    "company": "",
+    "phone": "+923042808475",
+    "email": "dspmarketing.agency@gmail.com",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup3",
+    "dealValue": "0",
+    "notes": "My team and I are working on an event project and urgently requires the services of a Google Ads Specialist for 6 months (Freelance). \n\nHere is the scope of work: \n✔️ Build and manage Search campaigns targeting high-intent users.\n✔️ Set up remarketing campaigns for visitors who don't register on their first visit.\n✔️ Optimize bids, keywords, audiences, and ad copy.\n✔️ Monitor cost per registration and conversion rates.\n✔️ Reallocate budget toward the best-performing campaigns.\n✔️ Provide detailed reporting on registrations generated through paid search. \n\nLinkedIn family, if you know of anyone who provides this service, please let them send me a DM or send an email to me at dspmarketing.agency@gmail.com. The individual should also send a portfolio of work (showing performances/results) or a few case studies of their work",
+    "nextFollowup": "2026-07-07",
+    "createdAt": "2026-07-02",
+    "updatedAt": "2026-07-02"
+  },
+  {
+    "name": "Gavin Joseph Brennan",
+    "company": "",
+    "phone": "+923042808475",
+    "email": "gavmikejose@gmail.com",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup3",
+    "dealValue": "0",
+    "notes": "A good friend of mine is looking for an agency or fractional advisor to help with omnichannel growth, specifically expanding from Amazon to Shopify.\n\nIt’s a 7-figure pet supplements brand.\n\nIf you know anyone who specializes in this space, please tag them below or send me a DM.\n\nCheers!",
+    "nextFollowup": "2026-07-07",
+    "createdAt": "2026-07-02",
+    "updatedAt": "2026-07-02"
+  },
+  {
+    "name": "Denise Jackson",
+    "company": "",
+    "phone": "+923042808475",
+    "email": "hello@appleseedphotography.ca",
+    "source": "Facebook",
+    "finder": "Lutfan",
+    "status": "followup2",
+    "dealValue": "0",
+    "notes": "Can y'all help a girl out? \nI am looking to hire someone that knows how to do SEO, Facebook Ads, Instagram ,Shopify, Google ❤️  for Appleseed Photography \nThank youuuu!!!",
+    "nextFollowup": "2026-07-06",
+    "createdAt": "2026-07-02",
+    "updatedAt": "2026-07-02"
+  },
+  {
+    "name": "Dmytro Snihur",
+    "company": "",
+    "phone": "+923042808475",
+    "email": "snegurdmitrij@gmail.com",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup2",
+    "dealValue": "0",
+    "notes": "I'm looking for a paid media marketer to help manage a few Google Ads and Meta Ads accounts.\n\nFreelancers and agencies are both welcome.\n\nExperience with eCommerce and SaaS is a big plus.\n\nIf you're interested, drop a comment or send me a message with a few case studies. It'll help us skip the back and forth and get straight to the conversation.\n\nLet's chat. ❤️",
+    "nextFollowup": "2026-07-06",
+    "createdAt": "2026-07-02",
+    "updatedAt": "2026-07-02"
+  },
+  {
+    "name": "Abdul Kabeer Zaheer",
+    "company": "",
+    "phone": "0300 2251251",
+    "email": "",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup2",
+    "dealValue": "0",
+    "notes": "I’m looking for someone who truly knows how to run high-performing Meta Ads.\n\nI’m not looking for someone who just sets up campaigns. I want someone who understands strategy, optimizes performance, and consistently generates high-quality leads that convert into real business.\n\nIf you’re confident in your skills and have a proven track record of delivering results, I’d love to hear from you.",
+    "nextFollowup": "2026-07-06",
+    "createdAt": "2026-07-02",
+    "updatedAt": "2026-07-02"
+  },
+  {
+    "name": "Marko",
+    "company": "",
+    "phone": "+923112360908",
+    "email": "tanner@coatinglaunch.com",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup2",
+    "dealValue": "0",
+    "notes": "🚨 We're Hiring at CoatingLaunch 🚨\n\nWe're looking for a Marketing Executive to join our team.\n\nThis role is ideal for someone with hands-on experience managing:\n- Meta (Facebook & Instagram) Ads\n- Google Ads\n- Lead generation campaigns\n- Campaign optimization and performance tracking\n\nIf you're data-driven, love scaling campaigns, and want to work with one of the fastest-growing marketing companies in the home service industry, we'd love to hear from you.\n\n📍Full-time\n\nSend me a DM or email your resume to tanner@coatinglaunch.com if you're interested or know someone who would be a great fit.",
+    "nextFollowup": "2026-07-06",
+    "createdAt": "2026-07-02",
+    "updatedAt": "2026-07-02"
+  },
+  {
+    "name": "no anem",
+    "company": "",
+    "phone": "+923042808475",
+    "email": "uniquesafedrive@gmail.com",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup2",
+    "dealValue": "0",
+    "notes": "We are looking for a professional Website Developer and an SEO/Google Ads Expert. If you are experienced and confident in delivering high-quality results, please contact us. Only experts, please.\nEmail: uniquesafedrive@gmail.com\nWe are looking for a professional Website Developer and an SEO/Google Ads Expert. If you are experienced and confident in delivering high-quality results, please contact us. Only experts, please.",
+    "nextFollowup": "2026-07-06",
+    "createdAt": "2026-07-02",
+    "updatedAt": "2026-07-02"
+  },
+  {
+    "name": "Elizabeth",
+    "company": "",
+    "phone": "+923042808475",
+    "email": "contactwhitecodelabs@gmail.com",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup2",
+    "dealValue": "0",
+    "notes": "I'm looking for an experienced WordPress Developer to build and maintain my personal showcase website.\n\nRequirements:\n5+ years of professional WordPress experience\nStrong portfolio of high-quality WordPress websites\nIf you're interested, please send me a message with your portfolio. Thanks!\n\nElizabeth J.\nUI/UX Designer\ncontactwhitecodelabs@gmail.com",
+    "nextFollowup": "2026-07-06",
+    "createdAt": "2026-07-02",
+    "updatedAt": "2026-07-02"
+  },
+  {
+    "name": "Amey kamble",
+    "company": "",
+    "phone": "+923042808475",
+    "email": "ameykamble33@gmail.com",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup2",
+    "dealValue": "0",
+    "notes": "Looking for a website developer for a freelance project (B2B brand).\n\nWhat I'm looking for:\n- Experience with B2B websites specifically\n- Comfortable with WordPress or Webflow\n- Understands basic SEO so we're not fixing it later\n- Can build clean lead forms and landing pages\n\nThis is a freelance gig, so if you're open to project-based work, send me a message or drop your portfolio in the comments. Referrals welcome too.",
+    "nextFollowup": "2026-07-06",
+    "createdAt": "2026-07-02",
+    "updatedAt": "2026-07-02"
+  },
+  {
+    "name": "Javeria Khan",
+    "company": "",
+    "phone": "+923042808475",
+    "email": "hr@officialwriters.com",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup1",
+    "dealValue": "0",
+    "notes": "We are looking for a skilled Website Developer who can design and develop a professional website for us.\n\nIf you're interested, please send your portfolio, previous work, or relevant samples to hr@officialwriters.com\n\nWe look forward to reviewing your work",
+    "nextFollowup": "2026-07-06",
+    "createdAt": "2026-07-02",
+    "updatedAt": "2026-07-02"
+  },
+  {
+    "name": "Mary",
+    "company": "",
+    "phone": "+14802090898",
+    "email": "thegrowthifyagency@gmail.com",
+    "source": "Facebook",
+    "finder": "Lutfan",
+    "status": "followup1",
+    "dealValue": "0",
+    "notes": "Seeking Shopify Designer for Established Beauty Brand\nI'm looking for a long-term creative partner to redesign the Shopify website for MB York Beauty. The ideal partner has experience with premium beauty or lifestyle brands, understands storytelling and conversion, and values collaboration. This project goes beyond e-commerce—it includes skincare, podcasting, events, education, and future product categories. I'm looking for someone who believes in building brands, not just websites.",
+    "nextFollowup": "2026-07-02",
+    "createdAt": "2026-07-01",
+    "updatedAt": "2026-07-01"
+  },
+  {
+    "name": "Tisha Stewart",
+    "company": "",
+    "phone": "+1 903-399-3359",
+    "email": "thegrowthifyagency@gmail.com",
+    "source": "Facebook",
+    "finder": "Lutfan",
+    "status": "followup1",
+    "dealValue": "0",
+    "notes": "",
+    "nextFollowup": "2026-07-03",
+    "createdAt": "2026-07-01",
+    "updatedAt": "2026-07-01"
+  },
+  {
+    "name": "Jessica Evans",
+    "company": "",
+    "phone": "+923042808475",
+    "email": "hello@turtledovecambridge.com",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup1",
+    "dealValue": "0",
+    "notes": "I'm looking for someone who designs wordpress websites to help rebuild/design Turtle Dove Cambridge Website? Anyone able to recommend? * Please do not contact me Whatsapp but send an email to jess@turtledovecambridge.com*",
+    "nextFollowup": "2026-07-03",
+    "createdAt": "2026-07-01",
+    "updatedAt": "2026-07-01"
+  },
+  {
+    "name": "passengergoods",
+    "company": "passengergoods.com",
+    "phone": "+923042808475",
+    "email": "info@passengergoods.com",
+    "source": "Facebook",
+    "finder": "Lutfan",
+    "status": "followup1",
+    "dealValue": "0",
+    "notes": "Looking for a Meta Ads person — Sydney, freelance\nWe’re a new Australian travel/accessories ecommerce brand (menswear-leaning) building out our paid social, and looking for someone to take over our Meta ad account from end of August.\nEarly days, small budget, lean creative assets, lots of room to shape how we approach it. Open to someone doing this as a side gig or freelancing in digital marketing already.\nWould love someone Sydney-based (shire would be amazing). If you run Meta ads and like the idea of growing a brand from scratch, feel free to comment below or email info@passengergoods.com\nThank you!",
+    "nextFollowup": "2026-07-03",
+    "createdAt": "2026-07-01",
+    "updatedAt": "2026-07-01"
+  },
+  {
+    "name": "Ahsan Mehmood",
+    "company": "",
+    "phone": "+923042808475",
+    "email": "adil345rana@gmail.com",
+    "source": "LinkedIn",
+    "finder": "Lutfan",
+    "status": "followup1",
+    "dealValue": "0",
+    "notes": "adil345rana@gmail.com\n\nahsanmehmood@upwork.com\n\nGoogle Ads & Facebook Ads Specialist Needed\nWe are looking for a skilled digital marketer who can create, manage, and optimize Google Ads and Facebook Ads campaigns.\nResponsibilities:\nCreate and manage ad campaigns\nResearch target audience and keywords\nOptimize ads for better performance\nMonitor budget and improve ROI\nProvide regular reports and insights\nRequirements\nExperience with Google Ads and Facebook Ads Manager\nKnowledge of campaign optimization\nGood understanding of digital marketing strategies\nPlease share your previous work/results and explain your approach.\n\n\nAhsan Mehmood\nVeterinarian",
+    "nextFollowup": "2026-07-03",
+    "createdAt": "2026-07-01",
+    "updatedAt": "2026-07-01"
+  }
+];
+
+function useStore(key, initial, seedFn) {
+  const [data, setData] = useState(initial);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get(key, false);
+        if (res && res.value) {
+          setData(JSON.parse(res.value));
+        } else if (seedFn) {
+          setData(seedFn());
+        }
+      } catch (e) {
+        if (seedFn) setData(seedFn());
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    (async () => {
+      try {
+        await window.storage.set(key, JSON.stringify(data), false);
+      } catch (e) {
+        console.error("save failed", e);
+      }
+    })();
+  }, [data, loaded]);
+
+  return [data, setData, loaded];
+}
+
+function parseCSV(text) {
+  // Proper CSV parser handling quoted fields, embedded commas, and multi-line values
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+  const clean = text.replace(/^\uFEFF/, ""); // strip BOM
+  for (let i = 0; i < clean.length; i++) {
+    const c = clean[i];
+    const next = clean[i + 1];
+    if (inQuotes) {
+      if (c === '"' && next === '"') { field += '"'; i++; }
+      else if (c === '"') { inQuotes = false; }
+      else { field += c; }
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ",") { row.push(field); field = ""; }
+      else if (c === "\r") { /* skip */ }
+      else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+      else field += c;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  if (!rows.length) return [];
+  const headers = rows[0].map(h => h.trim());
+  return rows.slice(1).filter(r => r.some(v => v && v.trim())).map(r => {
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = (r[i] ?? "").trim(); });
+    return obj;
+  });
+}
+
+const STATUS_ALIASES = {
+  "new lead": "followup1",
+  "followup1": "followup1", "follow-up 1": "followup1", "follow up 1": "followup1",
+  "followup2": "followup2", "follow-up 2": "followup2", "follow up 2": "followup2",
+  "followup3": "followup3", "follow-up 3": "followup3", "follow up 3": "followup3",
+  "lastfollowup": "lastfollowup", "last followup": "lastfollowup", "last follow-up": "lastfollowup",
+  "notresponding": "notresponding", "not responding": "notresponding", "not-responding": "notresponding",
+  "clientday": "clientday", "client day": "clientday",
+  "ghost": "ghost", "interested but ghost": "ghost",
+  "won": "won", "won client": "won", "won-client": "won",
+};
+
+function normalizeImportedRow(raw) {
+  const get = (...keys) => {
+    for (const k of keys) {
+      const found = Object.keys(raw).find(rk => rk.toLowerCase().trim() === k.toLowerCase());
+      if (found && raw[found] && raw[found] !== "—") return raw[found];
+    }
+    return "";
+  };
+  const clean = (v) => (v === "—" ? "" : v);
+  const rawStatus = get("Status", "status").toLowerCase().trim();
+  const rawSource = clean(get("Source", "source"));
+  const rawFinder = clean(get("Assigned", "finder", "Kisne lead dhoondi"));
+
+  return {
+    ...emptyLead(),
+    name: clean(get("Name", "name")) || "Unnamed Lead",
+    company: clean(get("Company", "company")),
+    phone: clean(get("Phone", "phone")),
+    email: clean(get("Email", "email")),
+    source: SOURCES.includes(rawSource) ? rawSource : (SOURCES.find(s => s.toLowerCase() === rawSource.toLowerCase()) || SOURCES[0]),
+    finder: FINDERS.includes(rawFinder) ? rawFinder : (FINDERS.find(f => f.toLowerCase() === rawFinder.toLowerCase()) || FINDERS[0]),
+    status: STATUS_ALIASES[rawStatus] || "followup1",
+    dealValue: clean(get("Deal Value", "dealValue")) || "",
+    notes: clean(get("Notes", "notes")),
+    nextFollowup: clean(get("Follow-up Date", "nextFollowup", "Next Followup Date")),
+    createdAt: clean(get("Created", "createdAt")) || todayStr(),
+    updatedAt: todayStr(),
+  };
+}
+
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const today = new Date(todayStr());
+  const target = new Date(dateStr);
+  return Math.round((target - today) / (1000 * 60 * 60 * 24));
+}
+
+function Avatar({ name, size = 36 }) {
+  const initials = (name || "?").trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
+  const hue = useMemo(() => {
+    let h = 0;
+    for (const c of name || "?") h = (h * 31 + c.charCodeAt(0)) % 360;
+    return h;
+  }, [name]);
+  return (
+    <div
+      style={{ background: `hsl(${hue} 70% 50%)`, width: size, height: size }}
+      className="shrink-0 rounded-full flex items-center justify-center text-white font-bold shadow-sm"
+    >
+      <span style={{ fontSize: size * 0.35 }}>{initials || "?"}</span>
+    </div>
+  );
+}
+
+function Badge({ color, children }) {
+  return (
+    <span
+      className="px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1 whitespace-nowrap"
+      style={{ background: color + "22", color }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label className="block mb-3">
+      <span className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wide">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+const inputCls =
+  "w-full px-3 py-2 rounded-xl border-2 border-slate-200 focus:border-indigo-500 focus:outline-none text-sm bg-white transition-colors";
+
+function ConfirmDialog({ title, message, onConfirm, onCancel }) {
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-6" onClick={e => e.stopPropagation()}>
+        <h3 className="font-extrabold text-lg text-slate-800 mb-1.5">{title}</h3>
+        <p className="text-sm text-slate-500 mb-5">{message}</p>
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="flex-1 py-2.5 rounded-xl border-2 border-slate-200 font-bold text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button onClick={onConfirm} className="flex-1 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold text-sm">Delete</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LeadModal({ lead, onClose, onSave, onDelete }) {
+  const [form, setForm] = useState(lead);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const isNew = !lead.name && !lead.company && !lead.phone;
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-3xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white flex items-center justify-between px-6 py-4 border-b border-slate-100 rounded-t-3xl">
+          <h3 className="font-extrabold text-lg text-slate-800">{isNew ? "Add New Lead" : "Edit Lead"}</h3>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full"><X size={18} /></button>
+        </div>
+        <div className="p-6">
+          <Field label="Client / Lead Name">
+            <input className={inputCls} value={form.name} onChange={e => set("name", e.target.value)} placeholder="e.g. Ahmed Khan" />
+          </Field>
+          <Field label="Company">
+            <input className={inputCls} value={form.company} onChange={e => set("company", e.target.value)} placeholder="e.g. XYZ Fashion" />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Phone / WhatsApp">
+              <input className={inputCls} value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="+92..." />
+            </Field>
+            <Field label="Email">
+              <input className={inputCls} value={form.email} onChange={e => set("email", e.target.value)} placeholder="email@..." />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Lead Source (Kahan se mili)">
+              <select className={inputCls} value={form.source} onChange={e => set("source", e.target.value)}>
+                {SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Field>
+            <Field label="Lead Finder (Kisne dhoondi)">
+              <select className={inputCls} value={form.finder} onChange={e => set("finder", e.target.value)}>
+                {FINDERS.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </Field>
+          </div>
+          <Field label="Status">
+            <select className={inputCls} value={form.status} onChange={e => set("status", e.target.value)}>
+              {STATUSES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+            </select>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Deal Value (Rs / $)">
+              <input className={inputCls} value={form.dealValue} onChange={e => set("dealValue", e.target.value)} placeholder="e.g. 50000" />
+            </Field>
+            <Field label="Next Followup Date">
+              <input type="date" className={inputCls} value={form.nextFollowup} onChange={e => set("nextFollowup", e.target.value)} />
+            </Field>
+          </div>
+          <Field label="Notes">
+            <textarea className={inputCls + " min-h-[80px] resize-y"} value={form.notes} onChange={e => set("notes", e.target.value)} placeholder="Conversation notes, next steps..." />
+          </Field>
+          <div className="flex gap-3 mt-5">
+            <button
+              onClick={() => onSave({ ...form, updatedAt: todayStr() })}
+              disabled={!form.name.trim()}
+              className="flex-1 bg-indigo-600 disabled:bg-slate-300 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition-colors"
+            >
+              Save Lead
+            </button>
+            {!isNew && (
+              <button
+                onClick={() => setConfirmOpen(true)}
+                className="px-4 py-3 rounded-xl bg-red-50 text-red-600 hover:bg-red-100 font-bold"
+              >
+                <Trash2 size={18} />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+      {confirmOpen && (
+        <ConfirmDialog
+          title="Delete this lead?"
+          message={`"${form.name || "This lead"}" permanently delete ho jayega. Yeh action wapis nahi ho sakta.`}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => { setConfirmOpen(false); onDelete(form.id); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function TaskModal({ task, leads, onClose, onSave, onDelete }) {
+  const [form, setForm] = useState(task);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const isNew = !task.title;
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h3 className="font-extrabold text-lg text-slate-800">{isNew ? "Add Task" : "Edit Task"}</h3>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full"><X size={18} /></button>
+        </div>
+        <div className="p-6">
+          <Field label="Task Title">
+            <input className={inputCls} value={form.title} onChange={e => set("title", e.target.value)} placeholder="e.g. Send proposal to Ahmed" />
+          </Field>
+          <Field label="Related Lead (optional)">
+            <select className={inputCls} value={form.leadId} onChange={e => set("leadId", e.target.value)}>
+              <option value="">— None —</option>
+              {leads.map(l => <option key={l.id} value={l.id}>{l.name}{l.company ? ` (${l.company})` : ""}</option>)}
+            </select>
+          </Field>
+          <Field label="Due Date">
+            <input type="date" className={inputCls} value={form.dueDate} onChange={e => set("dueDate", e.target.value)} />
+          </Field>
+          <div className="flex gap-3 mt-5">
+            <button
+              onClick={() => onSave(form)}
+              disabled={!form.title.trim()}
+              className="flex-1 bg-indigo-600 disabled:bg-slate-300 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl"
+            >
+              Save Task
+            </button>
+            {!isNew && (
+              <button onClick={() => setConfirmOpen(true)} className="px-4 py-3 rounded-xl bg-red-50 text-red-600 hover:bg-red-100 font-bold">
+                <Trash2 size={18} />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+      {confirmOpen && (
+        <ConfirmDialog
+          title="Delete this task?"
+          message={`"${form.title || "This task"}" permanently delete ho jayega.`}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => { setConfirmOpen(false); onDelete(form.id); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function StatCard({ icon, label, value, color }) {
+  return (
+    <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex items-center gap-3">
+      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: color + "22", color }}>
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <div className="text-lg font-extrabold text-slate-800 truncate">{value}</div>
+        <div className="text-xs text-slate-500 font-medium">{label}</div>
+      </div>
+    </div>
+  );
+}
+
+const PIE_COLORS = ["#3B82F6", "#6366F1", "#8B5CF6", "#EC4899", "#94A3B8", "#F59E0B", "#F97316", "#10B981"];
+const PAGE_SIZE = 10;
+
+function NavItem({ icon, label, active, onClick, badge, pulse }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-colors ${
+        active ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/30" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+      }`}
+    >
+      <span className="relative">
+        {icon}
+        {pulse && badge > 0 && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 animate-ping" />}
+      </span>
+      <span className="flex-1 text-left">{label}</span>
+      {badge > 0 && (
+        <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full min-w-[18px] text-center ${active ? "bg-white text-indigo-600" : "bg-red-500 text-white"} ${pulse ? "animate-pulse" : ""}`}>
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function GrowthifyCRM() {
+  const [leads, setLeads, leadsLoaded] = useStore("growthify:leads", [], () => SEED_LEADS.map(l => ({ ...l, id: uid() })));
+  const [tasks, setTasks, tasksLoaded] = useStore("growthify:tasks", []);
+  const [modalLead, setModalLead] = useState(null);
+  const [modalTask, setModalTask] = useState(null);
+  const [query, setQuery] = useState("");
+  const [filterSource, setFilterSource] = useState("");
+  const [filterFinder, setFilterFinder] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [page, setPage] = useState(1);
+  const [screen, setScreen] = useState("dashboard");
+  const fileInputRef = useRef(null);
+  const [toast, setToast] = useState("");
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
+
+  useEffect(() => { setPage(1); }, [query, filterSource, filterFinder, filterStatus]);
+
+  const filtered = useMemo(() => {
+    return leads.filter(l => {
+      const q = query.trim().toLowerCase();
+      const matchesQ = !q || l.name.toLowerCase().includes(q) || l.company.toLowerCase().includes(q) || l.phone.toLowerCase().includes(q) || l.email.toLowerCase().includes(q);
+      const matchesSource = !filterSource || l.source === filterSource;
+      const matchesFinder = !filterFinder || l.finder === filterFinder;
+      const matchesStatus = !filterStatus || l.status === filterStatus;
+      return matchesQ && matchesSource && matchesFinder && matchesStatus;
+    });
+  }, [leads, query, filterSource, filterFinder, filterStatus]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const byStatus = (key) => filtered.filter(l => l.status === key);
+
+  const stats = useMemo(() => {
+    const won = leads.filter(l => l.status === "won").length;
+    const active = leads.filter(l => !["won", "notresponding"].includes(l.status)).length;
+    const totalValue = leads.filter(l => l.status === "won").reduce((sum, l) => sum + (parseFloat(l.dealValue) || 0), 0);
+    return { total: leads.length, won, active, totalValue };
+  }, [leads]);
+
+  const followupLeads = useMemo(() => {
+    return leads.filter(l => l.nextFollowup).map(l => ({ ...l, daysLeft: daysUntil(l.nextFollowup) })).sort((a, b) => a.daysLeft - b.daysLeft);
+  }, [leads]);
+
+  const dueTodayOrOverdueCount = useMemo(() => followupLeads.filter(l => l.daysLeft <= 0).length, [followupLeads]);
+  const pendingTasksCount = useMemo(() => tasks.filter(t => !t.done).length, [tasks]);
+  const notificationsCount = dueTodayOrOverdueCount + tasks.filter(t => !t.done && t.dueDate && daysUntil(t.dueDate) <= 0).length;
+
+  const analytics = useMemo(() => {
+    const byStatusData = STATUSES.map(s => ({ name: s.label, value: leads.filter(l => l.status === s.key).length, color: s.color }));
+    const bySourceData = SOURCES.map(s => ({ name: s, value: leads.filter(l => l.source === s).length }));
+    const byFinderData = FINDERS.map(f => ({ name: f, leads: leads.filter(l => l.finder === f).length, won: leads.filter(l => l.finder === f && l.status === "won").length }));
+    const winRate = leads.length ? Math.round((stats.won / leads.length) * 100) : 0;
+    // last 6 months trend
+    const months = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(); d.setMonth(d.getMonth() - i);
+      months.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: d.toLocaleString("default", { month: "short" }) });
+    }
+    const trend = months.map(m => ({
+      name: m.label,
+      leads: leads.filter(l => (l.createdAt || "").startsWith(m.key)).length,
+      won: leads.filter(l => (l.updatedAt || "").startsWith(m.key) && l.status === "won").length,
+    }));
+    return { byStatusData, bySourceData, byFinderData, winRate, trend };
+  }, [leads, stats]);
+
+  const saveLead = (lead) => {
+    setLeads(prev => prev.some(l => l.id === lead.id) ? prev.map(l => (l.id === lead.id ? lead : l)) : [lead, ...prev]);
+    setModalLead(null);
+    showToast("Lead saved ✅");
+  };
+  const deleteLead = (id) => { setLeads(prev => prev.filter(l => l.id !== id)); setModalLead(null); showToast("Lead deleted 🗑️"); };
+
+  const saveTask = (task) => {
+    setTasks(prev => prev.some(t => t.id === task.id) ? prev.map(t => (t.id === task.id ? task : t)) : [task, ...prev]);
+    setModalTask(null);
+    showToast("Task saved ✅");
+  };
+  const deleteTask = (id) => { setTasks(prev => prev.filter(t => t.id !== id)); setModalTask(null); showToast("Task deleted 🗑️"); };
+  const toggleTask = (id) => setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
+
+  const exportJSON = () => {
+    const blob = new Blob([JSON.stringify(leads, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `growthify-crm-${todayStr()}.json`; a.click();
+    URL.revokeObjectURL(url); showToast("Exported JSON ⬇️");
+  };
+  const exportCSV = () => {
+    const headers = ["name", "company", "phone", "email", "source", "finder", "status", "dealValue", "notes", "nextFollowup", "createdAt", "updatedAt"];
+    const rows = leads.map(l => headers.map(h => `"${String(l[h] ?? "").replace(/"/g, '""')}"`).join(","));
+    const csv = [headers.join(","), ...rows].join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `growthify-crm-${todayStr()}.csv`; a.click();
+    URL.revokeObjectURL(url); showToast("Exported CSV ⬇️");
+  };
+  const handleImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const text = evt.target.result;
+        let withIds = [];
+        if (file.name.endsWith(".json")) {
+          const imported = JSON.parse(text);
+          withIds = imported.map(l => ({ ...emptyLead(), ...l, id: l.id || uid() }));
+        } else {
+          const rows = parseCSV(text);
+          withIds = rows.map(r => ({ ...normalizeImportedRow(r), id: uid() }));
+        }
+        setLeads(prev => [...withIds, ...prev]);
+        showToast(`Imported ${withIds.length} leads ✅`);
+      } catch (err) { showToast("Import failed ❌ - file format check karein"); }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const loaded = leadsLoaded && tasksLoaded;
+  if (!loaded) {
+    return <div className="h-full min-h-[500px] flex items-center justify-center bg-slate-900"><div className="text-slate-400 font-semibold">Loading CRM...</div></div>;
+  }
+
+  const NAV = [
+    { section: "MAIN", items: [
+      { key: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={17} /> },
+      { key: "leads", label: "Leads", icon: <Users size={17} />, badge: leads.length },
+      { key: "pipeline", label: "Pipeline", icon: <GitBranch size={17} /> },
+      { key: "followups", label: "Follow-ups", icon: <Calendar size={17} />, badge: dueTodayOrOverdueCount, pulse: true },
+    ]},
+    { section: "INSIGHTS", items: [
+      { key: "analytics", label: "Analytics", icon: <BarChart3 size={17} /> },
+      { key: "reports", label: "Reports", icon: <FileText size={17} /> },
+    ]},
+    { section: "TOOLS", items: [
+      { key: "tasks", label: "Tasks", icon: <CheckSquare size={17} />, badge: pendingTasksCount },
+      { key: "notifications", label: "Notifications", icon: <Bell size={17} />, badge: notificationsCount, pulse: true },
+    ]},
+  ];
+
+  return (
+    <div className="min-h-screen flex bg-slate-50 font-sans">
+      {/* SIDEBAR */}
+      <div className="w-60 shrink-0 bg-slate-900 min-h-screen p-4 flex flex-col gap-6 sticky top-0 h-screen overflow-y-auto">
+        <div className="px-2 pt-2 pb-1">
+          <div className="text-white font-extrabold text-lg">Growthify</div>
+          <div className="text-slate-400 text-xs">CRM Dashboard</div>
+        </div>
+        {NAV.map(group => (
+          <div key={group.section}>
+            <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-3 mb-2">{group.section}</div>
+            <div className="space-y-1">
+              {group.items.map(item => (
+                <NavItem key={item.key} icon={item.icon} label={item.label} active={screen === item.key} onClick={() => setScreen(item.key)} badge={item.badge} pulse={item.pulse} />
+              ))}
+            </div>
+          </div>
+        ))}
+        <div className="mt-auto px-3 pt-4 border-t border-slate-800">
+          <button onClick={() => setModalLead(emptyLead())} className="w-full flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-3 py-2.5 rounded-xl">
+            <Plus size={16} /> Add Lead
+          </button>
+        </div>
+      </div>
+
+      {/* MAIN CONTENT */}
+      <div className="flex-1 p-5 md:p-7 max-w-full overflow-x-hidden">
+        {/* DASHBOARD */}
+        {screen === "dashboard" && (
+          <div>
+            <h1 className="text-2xl font-extrabold text-slate-800 mb-1">Dashboard</h1>
+            <p className="text-slate-500 text-sm mb-4">Growthify Agency ka overall performance</p>
+            {dueTodayOrOverdueCount > 0 && (
+              <div onClick={() => setScreen("followups")} className="flex items-center gap-3 bg-red-50 border-2 border-red-100 text-red-600 rounded-2xl px-4 py-3 mb-6 cursor-pointer hover:bg-red-100 transition-colors">
+                <span className="relative shrink-0">
+                  <Bell size={18} />
+                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                </span>
+                <span className="text-sm font-bold flex-1">
+                  {dueTodayOrOverdueCount} followup{dueTodayOrOverdueCount > 1 ? "s" : ""} due hain aaj ya overdue — click karke dekho
+                </span>
+              </div>
+            )}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <StatCard icon={<Users size={18} />} label="Total Leads" value={stats.total} color="#6366F1" />
+              <StatCard icon={<TrendingUp size={18} />} label="Active" value={stats.active} color="#F59E0B" />
+              <StatCard icon={<CheckCircle2 size={18} />} label="Won Clients" value={stats.won} color="#10B981" />
+              <StatCard icon={<DollarSign size={18} />} label="Won Value" value={`Rs ${stats.totalValue.toLocaleString()}`} color="#EC4899" />
+            </div>
+            <div className="grid md:grid-cols-2 gap-5 mb-6">
+              <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+                <h3 className="font-bold text-slate-700 mb-4 text-sm">Leads Trend (last 6 months)</h3>
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={analytics.trend}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="leads" name="New Leads" stroke="#6366F1" strokeWidth={2.5} />
+                    <Line type="monotone" dataKey="won" name="Won" stroke="#10B981" strokeWidth={2.5} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+                <h3 className="font-bold text-slate-700 mb-4 text-sm">Pipeline Snapshot</h3>
+                <div className="space-y-2.5">
+                  {STATUSES.map(s => {
+                    const count = leads.filter(l => l.status === s.key).length;
+                    const pct = leads.length ? (count / leads.length) * 100 : 0;
+                    return (
+                      <div key={s.key}>
+                        <div className="flex justify-between text-xs font-semibold mb-1"><span className="text-slate-600">{s.label}</span><span className="text-slate-400">{count}</span></div>
+                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{ width: `${pct}%`, background: s.color }} /></div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-slate-700 text-sm">Upcoming Follow-ups</h3>
+                <button onClick={() => setScreen("followups")} className="text-xs font-bold text-indigo-600 hover:underline">View all →</button>
+              </div>
+              <div className="divide-y divide-slate-50">
+                {followupLeads.slice(0, 5).map(l => (
+                  <div key={l.id} onClick={() => setModalLead(l)} className="flex items-center gap-3 py-2.5 cursor-pointer hover:bg-slate-50 rounded-lg px-2">
+                    <Avatar name={l.name} size={30} />
+                    <div className="flex-1 min-w-0"><div className="font-semibold text-sm text-slate-800 truncate">{l.name}</div></div>
+                    <span className={`text-xs font-bold ${l.daysLeft <= 0 ? "text-red-500" : "text-slate-400"}`}>{l.nextFollowup}</span>
+                  </div>
+                ))}
+                {followupLeads.length === 0 && <div className="text-center text-slate-300 py-6 text-sm">Koi followup nahi</div>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* LEADS (ALL LEADS TABLE) */}
+        {screen === "leads" && (
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+              <div>
+                <h1 className="text-2xl font-extrabold text-slate-800">Leads</h1>
+                <p className="text-slate-500 text-sm">{filtered.length} of {leads.length} leads</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white border-2 border-slate-200 hover:border-indigo-300 text-slate-700 font-semibold text-sm px-3.5 py-2 rounded-xl">
+                  <Upload size={15} /> Import
+                </button>
+                <input ref={fileInputRef} type="file" accept=".json,.csv" className="hidden" onChange={handleImport} />
+                <button onClick={exportCSV} className="flex items-center gap-1.5 bg-white border-2 border-slate-200 hover:border-indigo-300 text-slate-700 font-semibold text-sm px-3.5 py-2 rounded-xl">
+                  <Download size={15} /> CSV
+                </button>
+                <button onClick={exportJSON} className="flex items-center gap-1.5 bg-white border-2 border-slate-200 hover:border-indigo-300 text-slate-700 font-semibold text-sm px-3.5 py-2 rounded-xl">
+                  <Download size={15} /> JSON
+                </button>
+                <button onClick={() => setModalLead(emptyLead())} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-md shadow-indigo-200">
+                  <Plus size={16} /> Add Lead
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-3 mb-4 items-center">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search naam, company, phone, email..." className="w-full pl-9 pr-3 py-2.5 rounded-xl border-2 border-slate-200 focus:border-indigo-500 focus:outline-none text-sm bg-white" />
+              </div>
+              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-3 py-2.5 rounded-xl border-2 border-slate-200 text-sm bg-white font-medium">
+                <option value="">All Status</option>
+                {STATUSES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+              </select>
+              <select value={filterSource} onChange={e => setFilterSource(e.target.value)} className="px-3 py-2.5 rounded-xl border-2 border-slate-200 text-sm bg-white font-medium">
+                <option value="">All Sources</option>
+                {SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <select value={filterFinder} onChange={e => setFilterFinder(e.target.value)} className="px-3 py-2.5 rounded-xl border-2 border-slate-200 text-sm bg-white font-medium">
+                <option value="">All Team</option>
+                {FINDERS.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-x-auto">
+              <table className="w-full text-sm min-w-[800px]">
+                <thead>
+                  <tr className="border-b border-slate-100 text-slate-400 text-xs uppercase font-bold">
+                    <th className="text-left px-4 py-3">Lead</th>
+                    <th className="text-left px-4 py-3">Status</th>
+                    <th className="text-left px-4 py-3">Source</th>
+                    <th className="text-left px-4 py-3">Finder</th>
+                    <th className="text-left px-4 py-3">Deal Value</th>
+                    <th className="text-left px-4 py-3">Next Followup</th>
+                    <th className="text-left px-4 py-3"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginated.map(l => {
+                    const st = STATUS_MAP[l.status];
+                    return (
+                      <tr key={l.id} className="border-b border-slate-50 hover:bg-slate-50 cursor-pointer" onClick={() => setModalLead(l)}>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2.5">
+                            <Avatar name={l.name} size={30} />
+                            <div><div className="font-bold text-slate-800">{l.name}</div><div className="text-xs text-slate-400">{l.company}</div></div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3"><Badge color={st.color}>{st.label}</Badge></td>
+                        <td className="px-4 py-3"><Badge color={SOURCE_COLORS[l.source]}>{l.source}</Badge></td>
+                        <td className="px-4 py-3"><Badge color={FINDER_COLORS[l.finder]}>{l.finder}</Badge></td>
+                        <td className="px-4 py-3 font-semibold text-emerald-600">{l.dealValue ? `Rs ${Number(l.dealValue).toLocaleString()}` : "—"}</td>
+                        <td className="px-4 py-3 text-slate-500">{l.nextFollowup || "—"}</td>
+                        <td className="px-4 py-3"><Edit2 size={14} className="text-slate-300" /></td>
+                      </tr>
+                    );
+                  })}
+                  {paginated.length === 0 && <tr><td colSpan={7} className="text-center text-slate-300 py-10">Koi lead nahi mila</td></tr>}
+                </tbody>
+              </table>
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100">
+                  <span className="text-xs text-slate-400">Page {page} of {totalPages}</span>
+                  <div className="flex gap-2">
+                    <button disabled={page === 1} onClick={() => setPage(p => p - 1)} className="p-2 rounded-lg border-2 border-slate-200 disabled:opacity-30"><ChevronLeft size={15} /></button>
+                    <button disabled={page === totalPages} onClick={() => setPage(p => p + 1)} className="p-2 rounded-lg border-2 border-slate-200 disabled:opacity-30"><ChevronRight size={15} /></button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* PIPELINE */}
+        {screen === "pipeline" && (
+          <div>
+            <h1 className="text-2xl font-extrabold text-slate-800 mb-1">Pipeline</h1>
+            <p className="text-slate-500 text-sm mb-5">Drag-free kanban — status change karne ke liye card open karo</p>
+            <div className="flex flex-wrap gap-3 mb-5 items-center">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search..." className="w-full pl-9 pr-3 py-2.5 rounded-xl border-2 border-slate-200 focus:border-indigo-500 focus:outline-none text-sm bg-white" />
+              </div>
+            </div>
+            <div className="flex gap-4 overflow-x-auto pb-4">
+              {STATUSES.map(status => {
+                const items = byStatus(status.key);
+                return (
+                  <div key={status.key} className="min-w-[280px] w-[280px] shrink-0">
+                    <div className="flex items-center justify-between mb-3 px-1">
+                      <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full" style={{ background: status.color }} /><h3 className="font-bold text-sm text-slate-700">{status.label}</h3></div>
+                      <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{items.length}</span>
+                    </div>
+                    <div className="space-y-2.5 min-h-[100px]">
+                      {items.map(lead => {
+                        const dLeft = lead.nextFollowup ? daysUntil(lead.nextFollowup) : null;
+                        const isDue = dLeft !== null && dLeft <= 0;
+                        return (
+                          <div key={lead.id} onClick={() => setModalLead(lead)} className="bg-white rounded-2xl p-3.5 shadow-sm hover:shadow-md border border-slate-100 cursor-pointer transition-all hover:-translate-y-0.5 relative" style={{ borderLeft: `4px solid ${status.color}` }}>
+                            {isDue && <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center shadow-md"><Bell size={11} className="text-white" /></span>}
+                            <div className="flex items-start gap-2.5">
+                              <Avatar name={lead.name} />
+                              <div className="min-w-0 flex-1"><div className="font-bold text-sm text-slate-800 truncate">{lead.name}</div>{lead.company && <div className="text-xs text-slate-500 truncate">{lead.company}</div>}</div>
+                              <Edit2 size={13} className="text-slate-300 mt-1 shrink-0" />
+                            </div>
+                            <div className="flex flex-wrap gap-1.5 mt-2.5">
+                              <Badge color={SOURCE_COLORS[lead.source] || "#94A3B8"}>{lead.source}</Badge>
+                              <Badge color={FINDER_COLORS[lead.finder] || "#94A3B8"}>{lead.finder}</Badge>
+                            </div>
+                            {lead.dealValue && <div className="text-xs font-bold text-emerald-600 mt-2">Rs {Number(lead.dealValue).toLocaleString()}</div>}
+                            {lead.nextFollowup && <div className={`flex items-center gap-1 text-[11px] mt-1.5 font-semibold ${isDue ? "text-red-500" : "text-slate-400"}`}><Calendar size={11} /> {lead.nextFollowup}</div>}
+                          </div>
+                        );
+                      })}
+                      {items.length === 0 && <div className="text-center text-xs text-slate-300 py-6 border-2 border-dashed border-slate-100 rounded-xl">Koi lead nahi</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* FOLLOWUPS */}
+        {screen === "followups" && (
+          <div>
+            <h1 className="text-2xl font-extrabold text-slate-800 mb-1">Follow-ups</h1>
+            <p className="text-slate-500 text-sm mb-5">{dueTodayOrOverdueCount} due ya overdue</p>
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-2">
+              {followupLeads.length === 0 && <div className="text-center text-slate-300 py-16">Koi followup date set nahi hai kisi lead pe</div>}
+              <div className="divide-y divide-slate-50">
+                {followupLeads.map(l => {
+                  const st = STATUS_MAP[l.status];
+                  let tag, tagColor, Icon;
+                  if (l.daysLeft < 0) { tag = `${Math.abs(l.daysLeft)} din late`; tagColor = "#EF4444"; Icon = AlertCircle; }
+                  else if (l.daysLeft === 0) { tag = "Aaj hai!"; tagColor = "#EF4444"; Icon = Bell; }
+                  else if (l.daysLeft <= 2) { tag = `${l.daysLeft} din baaki`; tagColor = "#F59E0B"; Icon = Bell; }
+                  else { tag = `${l.daysLeft} din baaki`; tagColor = "#94A3B8"; Icon = CheckCircle2; }
+                  return (
+                    <div key={l.id} onClick={() => setModalLead(l)} className="flex items-center gap-3 px-3 py-3.5 hover:bg-slate-50 cursor-pointer rounded-xl">
+                      <Avatar name={l.name} />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-sm text-slate-800 truncate">{l.name} {l.company && <span className="text-slate-400 font-medium">— {l.company}</span>}</div>
+                        <div className="flex flex-wrap gap-1.5 mt-1"><Badge color={st.color}>{st.label}</Badge><Badge color={SOURCE_COLORS[l.source]}>{l.source}</Badge></div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-xs text-slate-400 mb-1">{l.nextFollowup}</div>
+                        <div className="flex items-center gap-1 justify-end font-bold text-xs" style={{ color: tagColor }}><Icon size={13} /> {tag}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ANALYTICS */}
+        {screen === "analytics" && (
+          <div>
+            <h1 className="text-2xl font-extrabold text-slate-800 mb-1">Analytics</h1>
+            <p className="text-slate-500 text-sm mb-5">Charts aur trends</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+              <StatCard icon={<TrendingUp size={18} />} label="Win Rate" value={`${analytics.winRate}%`} color="#10B981" />
+              <StatCard icon={<Users size={18} />} label="Total Leads" value={stats.total} color="#6366F1" />
+              <StatCard icon={<DollarSign size={18} />} label="Won Value" value={`Rs ${stats.totalValue.toLocaleString()}`} color="#EC4899" />
+              <StatCard icon={<Bell size={18} />} label="Due Followups" value={dueTodayOrOverdueCount} color="#F59E0B" />
+            </div>
+            <div className="grid md:grid-cols-2 gap-5">
+              <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+                <h3 className="font-bold text-slate-700 mb-4 text-sm">Leads by Status</h3>
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={analytics.byStatusData} layout="vertical" margin={{ left: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#F1F5F9" />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
+                    <Tooltip />
+                    <Bar dataKey="value" radius={[0, 6, 6, 0]}>{analytics.byStatusData.map((entry, i) => <Cell key={i} fill={entry.color} />)}</Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+                <h3 className="font-bold text-slate-700 mb-4 text-sm">Leads by Source</h3>
+                <ResponsiveContainer width="100%" height={260}>
+                  <PieChart>
+                    <Pie data={analytics.bySourceData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label>
+                      {analytics.bySourceData.map((entry, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip /><Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 md:col-span-2">
+                <h3 className="font-bold text-slate-700 mb-4 text-sm">Team Performance (Leads Found vs Won)</h3>
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={analytics.byFinderData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                    <XAxis dataKey="name" tick={{ fontSize: 12, fontWeight: 600 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                    <Tooltip /><Legend />
+                    <Bar dataKey="leads" name="Leads Found" fill="#6366F1" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="won" name="Won" fill="#10B981" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* REPORTS */}
+        {screen === "reports" && (
+          <div>
+            <h1 className="text-2xl font-extrabold text-slate-800 mb-1">Reports</h1>
+            <p className="text-slate-500 text-sm mb-5">Summary export-ready reports</p>
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 mb-5">
+              <h3 className="font-bold text-slate-700 mb-4 text-sm">Status-wise Summary</h3>
+              <table className="w-full text-sm">
+                <thead><tr className="text-left text-xs uppercase text-slate-400 font-bold border-b border-slate-100"><th className="py-2">Status</th><th className="py-2">Count</th><th className="py-2">% of Total</th></tr></thead>
+                <tbody>
+                  {STATUSES.map(s => {
+                    const count = leads.filter(l => l.status === s.key).length;
+                    const pct = leads.length ? ((count / leads.length) * 100).toFixed(1) : 0;
+                    return (
+                      <tr key={s.key} className="border-b border-slate-50">
+                        <td className="py-2.5"><Badge color={s.color}>{s.label}</Badge></td>
+                        <td className="py-2.5 font-bold text-slate-700">{count}</td>
+                        <td className="py-2.5 text-slate-500">{pct}%</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 mb-5">
+              <h3 className="font-bold text-slate-700 mb-4 text-sm">Team-wise Summary</h3>
+              <table className="w-full text-sm">
+                <thead><tr className="text-left text-xs uppercase text-slate-400 font-bold border-b border-slate-100"><th className="py-2">Team Member</th><th className="py-2">Leads Found</th><th className="py-2">Won</th><th className="py-2">Win Rate</th></tr></thead>
+                <tbody>
+                  {analytics.byFinderData.map(f => (
+                    <tr key={f.name} className="border-b border-slate-50">
+                      <td className="py-2.5"><Badge color={FINDER_COLORS[f.name]}>{f.name}</Badge></td>
+                      <td className="py-2.5 font-bold text-slate-700">{f.leads}</td>
+                      <td className="py-2.5 font-bold text-emerald-600">{f.won}</td>
+                      <td className="py-2.5 text-slate-500">{f.leads ? Math.round((f.won / f.leads) * 100) : 0}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={exportCSV} className="flex items-center gap-1.5 bg-white border-2 border-slate-200 hover:border-indigo-300 text-slate-700 font-semibold text-sm px-4 py-2.5 rounded-xl"><Download size={15} /> Export Full CSV</button>
+              <button onClick={exportJSON} className="flex items-center gap-1.5 bg-white border-2 border-slate-200 hover:border-indigo-300 text-slate-700 font-semibold text-sm px-4 py-2.5 rounded-xl"><Download size={15} /> Export Full JSON</button>
+            </div>
+          </div>
+        )}
+
+        {/* TASKS */}
+        {screen === "tasks" && (
+          <div>
+            <div className="flex items-center justify-between mb-5">
+              <div><h1 className="text-2xl font-extrabold text-slate-800">Tasks</h1><p className="text-slate-500 text-sm">{pendingTasksCount} pending</p></div>
+              <button onClick={() => setModalTask(emptyTask())} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-md shadow-indigo-200"><Plus size={16} /> Add Task</button>
+            </div>
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-2">
+              {tasks.length === 0 && <div className="text-center text-slate-300 py-16">Koi task nahi hai, "Add Task" se shuru karo</div>}
+              <div className="divide-y divide-slate-50">
+                {tasks.map(t => {
+                  const linkedLead = leads.find(l => l.id === t.leadId);
+                  const dLeft = t.dueDate ? daysUntil(t.dueDate) : null;
+                  return (
+                    <div key={t.id} className="flex items-center gap-3 px-3 py-3.5 hover:bg-slate-50 rounded-xl group">
+                      <button onClick={() => toggleTask(t.id)}>
+                        {t.done ? <CheckSquare size={20} className="text-emerald-500" /> : <Square size={20} className="text-slate-300" />}
+                      </button>
+                      <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setModalTask(t)}>
+                        <div className={`font-semibold text-sm ${t.done ? "line-through text-slate-400" : "text-slate-800"}`}>{t.title}</div>
+                        {linkedLead && <div className="text-xs text-slate-400">Lead: {linkedLead.name}</div>}
+                      </div>
+                      {t.dueDate && (
+                        <span className={`text-xs font-bold ${!t.done && dLeft <= 0 ? "text-red-500" : "text-slate-400"}`}>{t.dueDate}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* NOTIFICATIONS */}
+        {screen === "notifications" && (
+          <div>
+            <h1 className="text-2xl font-extrabold text-slate-800 mb-1">Notifications</h1>
+            <p className="text-slate-500 text-sm mb-5">Due followups aur tasks ek jagah</p>
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-2">
+              <div className="divide-y divide-slate-50">
+                {followupLeads.filter(l => l.daysLeft <= 2).map(l => (
+                  <div key={"f" + l.id} onClick={() => setModalLead(l)} className="flex items-center gap-3 px-3 py-3.5 hover:bg-slate-50 cursor-pointer rounded-xl">
+                    <span className="w-9 h-9 rounded-full bg-red-50 flex items-center justify-center shrink-0"><Bell size={16} className="text-red-500" /></span>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-sm text-slate-800">Followup: {l.name}</div>
+                      <div className="text-xs text-slate-400">{l.daysLeft <= 0 ? "Due ho chuka hai" : `${l.daysLeft} din mein due`}</div>
+                    </div>
+                    <span className="text-xs font-bold text-red-500">{l.nextFollowup}</span>
+                  </div>
+                ))}
+                {tasks.filter(t => !t.done && t.dueDate && daysUntil(t.dueDate) <= 2).map(t => (
+                  <div key={"t" + t.id} onClick={() => setModalTask(t)} className="flex items-center gap-3 px-3 py-3.5 hover:bg-slate-50 cursor-pointer rounded-xl">
+                    <span className="w-9 h-9 rounded-full bg-amber-50 flex items-center justify-center shrink-0"><CheckSquare size={16} className="text-amber-500" /></span>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-sm text-slate-800">Task: {t.title}</div>
+                      <div className="text-xs text-slate-400">{daysUntil(t.dueDate) <= 0 ? "Due ho chuka hai" : `${daysUntil(t.dueDate)} din mein due`}</div>
+                    </div>
+                    <span className="text-xs font-bold text-amber-500">{t.dueDate}</span>
+                  </div>
+                ))}
+                {notificationsCount === 0 && <div className="text-center text-slate-300 py-16">Koi notification nahi — sab clear hai! 🎉</div>}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {modalLead && <LeadModal lead={modalLead} onClose={() => setModalLead(null)} onSave={saveLead} onDelete={deleteLead} />}
+      {modalTask && <TaskModal task={modalTask} leads={leads} onClose={() => setModalTask(null)} onSave={saveTask} onDelete={deleteTask} />}
+      {toast && <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-sm font-semibold px-5 py-3 rounded-xl shadow-xl z-50">{toast}</div>}
+    </div>
+  );
+}
+
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<GrowthifyCRM />);
+</script>
+</body>
+</html>
